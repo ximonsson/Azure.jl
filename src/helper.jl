@@ -20,6 +20,34 @@ tenant_id(creds::AzureCredentials) = creds.tenant_id
 client_id(creds::AzureCredentials) = creds.client_id
 client_secret(creds::AzureCredentials) = creds.client_secret
 
+
+"""
+Azure CLI credentials.
+
+Authenticates using the azure CLI.
+"""
+mutable struct AzureCLICredential <: AzureAuthProvider
+
+end
+
+function authenticate(c::AzureCLICredential)
+	JSON.parse(read(`az account get-access-token`, String))["accessToken"]
+end
+
+"""
+Default Azure Credentials.
+
+As implemented in the Python SDK.
+"""
+mutable struct DefaultAzureCredential <: AzureAuthProvider
+
+end
+
+function authenticate(c::DefaultAzureCredential)
+
+end
+
+
 """
 Holds a OpenAPI client to make API calls with, an auth provider to authenticate to Azure with, and an authenticated token.
 """
@@ -28,7 +56,7 @@ mutable struct AzureContext
     auth_provider::AzureAuthProvider
     token::Dict{String,Any}
     expires::Float64
-    
+
     function AzureContext(auth::AzureAuthProvider)
         new(OpenAPI.Clients.Client(DEFAULT_URI), auth, Dict{Symbol,Any}(), 0)
     end
