@@ -26,12 +26,58 @@ Azure CLI credentials.
 
 Authenticates using the azure CLI.
 """
-mutable struct AzureCLICredential <: AzureAuthProvider
+struct AzureCLICredential <: AzureAuthProvider
 
 end
 
 function authenticate(c::AzureCLICredential)
-	JSON.parse(read(`az account get-access-token`, String))["accessToken"]
+    bt = JSON.parse(read(`az account get-access-token`, String))["accessToken"]
+end
+
+"""
+Azure Environmental credential.
+
+Authenticates using the env varibles
+"""
+struct AzureEnvironmentCredentials
+    client_id::AbstractString
+    client_secret::AbstractString
+    tenant_id::AbstractString
+end
+
+function AzureEnvironmentCredentials()
+    AzureEnvironmentCredentials(
+        env["ARM_CLIENT_ID"],
+        env["ARM_CLIENT_SECRET"],
+        env["ARM_TENANT_ID"],
+    )
+end
+
+function authenticate(c::AzureEnvironmentCredentials)
+    @info("authenticating...")
+    data = Dict{String,String}(
+        "client_id" => c.client_id,
+        "client_secret" => c.client_secret,
+        "resource" => DEFAULT_URI*"/",  # must end with /
+        "grant_type" => "client_credentials"
+    )
+
+    headers = Dict{String,String}(
+        "Cookie" => "flight-uxoptin=true; stsservicecookie=ests; x-ms-gateway-slice=productionb; stsservicecookie=ests",
+        "Content-Type" => "application/x-www-form-urlencoded",
+        "Connection" => "close"
+    )
+
+    tenant = c.tenant_id
+    auth_url = AUTH_URI * "/" * tenant * "/oauth2/token"
+
+    input = PipeBuffer()
+    write(input, URIs.escapeuri(data))
+    output = IOBuffer()
+    resp = Downloads.request(auth_url; method="POST", input=input, output=output, headers=headers)
+    (isa(resp, Downloads.Response) && (200 <= resp.status <= 206)) || throw(OpenAPI.Clients.ApiException(resp))
+
+    return JSON.parse(String(take!(output)))
 end
 
 """
@@ -40,11 +86,19 @@ Default Azure Credentials.
 As implemented in the Python SDK.
 """
 mutable struct DefaultAzureCredential <: AzureAuthProvider
-
+    sources::Vec<<:AzureAuthProvider>
 end
 
 function authenticate(c::DefaultAzureCredential)
-
+    for s in c.sources
+        try
+            authenticate(s)
+        catch
+            # TODO better
+            continue
+        end
+    end
+    throw(AzureException("Could not authenticate"))
 end
 
 
@@ -104,31 +158,7 @@ Re-authenticates if token has expired.
 """
 function authenticate(ctx::AzureContext)
     (time() < ctx.expires) && return
-
-    @info("authenticating...")
-    data = Dict{String,String}(
-        "client_id" => client_id(ctx.auth_provider),
-        "client_secret" => client_secret(ctx.auth_provider),
-        "resource" => DEFAULT_URI*"/",  # must end with /
-        "grant_type" => "client_credentials"
-    )
-
-    headers = Dict{String,String}(
-        "Cookie" => "flight-uxoptin=true; stsservicecookie=ests; x-ms-gateway-slice=productionb; stsservicecookie=ests",
-        "Content-Type" => "application/x-www-form-urlencoded",
-        "Connection" => "close"
-    )
-
-    tenant = tenant_id(ctx.auth_provider)
-    auth_url = AUTH_URI * "/" * tenant * "/oauth2/token"
-
-    input = PipeBuffer()
-    write(input, URIs.escapeuri(data))
-    output = IOBuffer()
-    resp = Downloads.request(auth_url; method="POST", input=input, output=output, headers=headers)
-    (isa(resp, Downloads.Response) && (200 <= resp.status <= 206)) || throw(OpenAPI.Clients.ApiException(resp))
-
-    ctx.token = JSON.parse(String(take!(output)))
+    ctx.token = authenticate(ctx.provider)
     if "expires_in" in keys(ctx.token)
         ctx.expires = time() + parse(Int, ctx.token["expires_in"])
     elseif "expires_on" in keys(ctx.token)
