@@ -39,7 +39,7 @@ Azure Environmental credential.
 
 Authenticates using the env varibles
 """
-struct AzureEnvironmentCredentials
+struct AzureEnvironmentCredentials <: AzureAuthProvider
     client_id::AbstractString
     client_secret::AbstractString
     tenant_id::AbstractString
@@ -85,8 +85,8 @@ Default Azure Credentials.
 
 As implemented in the Python SDK.
 """
-mutable struct DefaultAzureCredential <: AzureAuthProvider
-    sources::Vec<<:AzureAuthProvider>
+struct DefaultAzureCredential <: AzureAuthProvider
+    sources::Vector{<:AzureAuthProvider}
 end
 
 function authenticate(c::DefaultAzureCredential)
